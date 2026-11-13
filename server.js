@@ -1,8 +1,11 @@
 // Sardar And Malik Store — standalone server.
-// Zero runtime dependencies for local use. Node.js 22+ only.
-// Storage: local SQLite file (node:sqlite) by default; if DATABASE_URL is set
-// (e.g. a free Neon/Supabase Postgres), it uses Postgres instead — the `pg`
-// package is then required (declared in package.json; hosts install it).
+// Node.js 22+ only. Storage: local SQLite file (node:sqlite) by default; if
+// DATABASE_URL is set (e.g. a free Neon/Supabase Postgres), it uses Postgres
+// instead — the `pg` package is then required (declared in package.json).
+// Email login codes + forgot-password use Gmail SMTP (nodemailer, declared in
+// package.json). The sending Gmail + App Password are set by the owner in the
+// Owner Panel (Email Settings) and stored in the settings table — never in
+// code. Until they are set, login/register work with password only (OTP off).
 // The Owner Panel password comes ONLY from the PANEL_PASSWORD environment
 // variable. There is no default password and it is never written to any file.
 "use strict";
@@ -38,7 +41,8 @@ const KEYMAP = {
   markazprice: "markazPrice", sardarprice: "sardarPrice", reviewcount: "reviewCount",
   customerid: "customerId", passwordhash: "passwordHash", createdat: "createdAt",
   productname: "productName", customername: "customerName", paymentmethod: "paymentMethod",
-  transactionid: "transactionId", orderid: "orderId"
+  transactionid: "transactionId", orderid: "orderId",
+  codehash: "codeHash", expiresat: "expiresAt"
 };
 function normalizeRow(row) {
   const out = {};
@@ -109,6 +113,15 @@ const DDL = () => [
      id ${ID()}, orderId INTEGER NOT NULL, customerId INTEGER NOT NULL,
      reason TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'Requested',
      createdAt TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS settings (
+     key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '')`,
+  `CREATE TABLE IF NOT EXISTS email_codes (
+     contact TEXT NOT NULL, purpose TEXT NOT NULL,
+     codeHash TEXT NOT NULL, data TEXT NOT NULL DEFAULT '{}',
+     expiresAt TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+     createdAt TEXT NOT NULL, PRIMARY KEY (contact, purpose))`,
+  `CREATE TABLE IF NOT EXISTS code_send_log (
+     id ${ID()}, contact TEXT NOT NULL, purpose TEXT NOT NULL, createdAt TEXT NOT NULL)`,
 ];
 
 async function seedIfEmpty() {
@@ -158,6 +171,100 @@ function checkPassword(pw, stored) {
 }
 function newToken() { return crypto.randomBytes(32).toString("hex"); }
 function nowIso() { return new Date().toISOString(); }
+
+// ---------------------------------------------------------------------------
+// Email login codes (Gmail OTP) + forgot password
+// The sending Gmail + App Password live in the settings table (Owner Panel >
+// Email Settings). Until the owner sets them, OTP stays OFF and login /
+// register work with password only, exactly as before.
+// ---------------------------------------------------------------------------
+function isEmail(s) { return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(s || "").trim()); }
+async function getSetting(key) {
+  const rows = await db.query("SELECT value FROM settings WHERE key=?", [key]);
+  return rows.length ? rows[0].value : "";
+}
+async function setSetting(key, value) {
+  await db.exec("INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [key, value]);
+}
+async function smtpSettings() {
+  const user = (await getSetting("smtpUser")).trim();
+  const pass = (await getSetting("smtpPass")).trim();
+  return { user, pass, on: !!(user && pass) };
+}
+function genCode() { return String(crypto.randomInt(100000, 1000000)); }
+function hashCode(code) { return crypto.createHash("sha256").update(String(code)).digest("hex"); }
+const CODE_TTL_MS = 10 * 60 * 1000; // codes live 10 minutes
+const CODE_MAX_ATTEMPTS = 5;
+
+async function sendEmailCode(to, code, purpose) {
+  const { user, pass } = await smtpSettings();
+  const nodemailer = require("nodemailer");
+  const transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST || "smtp.gmail.com",
+    port: Number(process.env.SMTP_PORT || 587),
+    secure: process.env.SMTP_SECURE === "true",
+    auth: (user && pass) ? { user, pass } : undefined,
+  });
+  const subject = purpose === "reset" ? "Sardar And Malik Store — Password Reset Code"
+    : purpose === "register" ? "Sardar And Malik Store — Account Verification Code"
+    : "Sardar And Malik Store — Login Code";
+  const text = "Assalam-o-Alaikum,\n\nAapka Sardar And Malik Store verification code hai:\n\n" + code +
+    "\n\nYe code 10 minute ke liye valid hai. Agar aapne ye request nahi ki, to is email ko ignore karein.\n\n— Sardar And Malik Store";
+  await transporter.sendMail({ from: '"Sardar And Malik Store" <' + user + '>', to, subject, text });
+}
+
+// Create + email a fresh code. Returns {ok:true} or {ok:false,error}.
+async function issueCode(contact, purpose, data) {
+  const smtp = await smtpSettings();
+  if (!smtp.on) return { ok: false, error: "Email service set nahi hai. Owner se rabta karein." };
+  // Rate limits: 60 seconds between sends, max 5 sends per hour.
+  const hourAgo = new Date(Date.now() - 3600000).toISOString();
+  const recent = await db.query(
+    "SELECT createdAt FROM code_send_log WHERE contact=? AND purpose=? AND createdAt>? ORDER BY createdAt DESC",
+    [contact, purpose, hourAgo]);
+  if (recent.length >= 5) return { ok: false, error: "Bohat zyada codes bhej diye. 1 ghanta ruk kar dobara try karein." };
+  if (recent.length && Date.now() - new Date(recent[0].createdAt).getTime() < 60000)
+    return { ok: false, error: "Code abhi bheja gaya hai. 1 minute ruk kar dobara bhejein." };
+  const code = genCode();
+  const expiresAt = new Date(Date.now() + CODE_TTL_MS).toISOString();
+  await db.exec("DELETE FROM email_codes WHERE contact=? AND purpose=?", [contact, purpose]);
+  await db.exec("INSERT INTO email_codes (contact,purpose,codeHash,data,expiresAt,attempts,createdAt) VALUES (?,?,?,?,?,0,?)",
+    [contact, purpose, hashCode(code), JSON.stringify(data || {}), expiresAt, nowIso()]);
+  await db.exec("INSERT INTO code_send_log (contact,purpose,createdAt) VALUES (?,?,?)", [contact, purpose, nowIso()]);
+  try {
+    await sendEmailCode(contact, code, purpose);
+  } catch (e) {
+    console.error("Email send failed:", e && e.message);
+    return { ok: false, error: "Gmail par code nahi bheja ja saka. Owner se rabta karein (email settings check karein)." };
+  }
+  return { ok: true };
+}
+
+// Check a code. On success the code is deleted and its stored data returned.
+async function verifyCode(contact, purpose, code) {
+  const rows = await db.query("SELECT * FROM email_codes WHERE contact=? AND purpose=?", [contact, purpose]);
+  if (!rows.length) return { ok: false, error: "Code nahi mila. Dobara code bhejein." };
+  const row = rows[0];
+  if (new Date(row.expiresAt).getTime() < Date.now()) {
+    await db.exec("DELETE FROM email_codes WHERE contact=? AND purpose=?", [contact, purpose]);
+    return { ok: false, error: "Code ki muddat khatam ho gayi. Dobara code bhejein." };
+  }
+  if (Number(row.attempts) >= CODE_MAX_ATTEMPTS) {
+    await db.exec("DELETE FROM email_codes WHERE contact=? AND purpose=?", [contact, purpose]);
+    return { ok: false, error: "Ghalat code bohat dafa dala gaya. Dobara code bhejein." };
+  }
+  const want = hashCode(String(code).trim());
+  const good = want.length === String(row.codeHash).length &&
+    crypto.timingSafeEqual(Buffer.from(want, "hex"), Buffer.from(String(row.codeHash), "hex"));
+  if (!good) {
+    await db.exec("UPDATE email_codes SET attempts=attempts+1 WHERE contact=? AND purpose=?", [contact, purpose]);
+    return { ok: false, error: "Ghalat code. Dobara try karein." };
+  }
+  await db.exec("DELETE FROM email_codes WHERE contact=? AND purpose=?", [contact, purpose]);
+  let data = {};
+  try { data = JSON.parse(row.data || "{}"); } catch { /* ignore */ }
+  return { ok: true, data };
+}
 function sendJson(res, code, obj) {
   const body = JSON.stringify(obj);
   res.writeHead(code, { "Content-Type": "application/json; charset=utf-8", "Content-Length": Buffer.byteLength(body) });
@@ -229,8 +336,33 @@ async function handleApi(req, res, pathname) {
       return sendJson(res, 400, { ok: false, error: "Naam, Gmail/phone number aur kam az kam 4 harf ka password zaroori hai." });
     const existing = await db.query("SELECT id FROM customers WHERE contact=?", [contact]);
     if (existing.length) return sendJson(res, 400, { ok: false, error: "Is Gmail/phone number se account pehle se bana hua hai. Login karein." });
+    // Gmail accounts: prove the inbox first — a code goes to the Gmail and
+    // the account is only created after it is entered. Phone accounts and
+    // stores without email set up register immediately, as before.
+    if (isEmail(contact) && (await smtpSettings()).on) {
+      const issued = await issueCode(contact, "register", { name, passwordHash: hashPassword(password) });
+      if (!issued.ok) return sendJson(res, 400, { ok: false, error: issued.error });
+      return sendJson(res, 200, { ok: true, needCode: true, contact });
+    }
     const r = await db.run("INSERT INTO customers (name,contact,passwordHash,createdAt) VALUES (?,?,?,?)",
       [name, contact, hashPassword(password), nowIso()]);
+    const token = newToken();
+    await db.exec("INSERT INTO sessions (token,customerId,kind,createdAt) VALUES (?,?, 'customer', ?)", [token, r.id, nowIso()]);
+    return sendJson(res, 200, { ok: true, token, customer: { id: r.id, name, contact } });
+  }
+
+  // POST /api/auth/register/confirm {contact, code}
+  if (req.method === "POST" && parts.join("/") === "api/auth/register/confirm") {
+    const contact = String(body.contact || "").trim();
+    const code = String(body.code || "").trim();
+    const v = await verifyCode(contact, "register", code);
+    if (!v.ok) return sendJson(res, 400, { ok: false, error: v.error });
+    const { name, passwordHash } = v.data || {};
+    if (!name || !passwordHash) return sendJson(res, 400, { ok: false, error: "Code verify nahi hua. Dobara register karein." });
+    const existing = await db.query("SELECT id FROM customers WHERE contact=?", [contact]);
+    if (existing.length) return sendJson(res, 400, { ok: false, error: "Is Gmail se account pehle se bana hua hai. Login karein." });
+    const r = await db.run("INSERT INTO customers (name,contact,passwordHash,createdAt) VALUES (?,?,?,?)",
+      [name, contact, passwordHash, nowIso()]);
     const token = newToken();
     await db.exec("INSERT INTO sessions (token,customerId,kind,createdAt) VALUES (?,?, 'customer', ?)", [token, r.id, nowIso()]);
     return sendJson(res, 200, { ok: true, token, customer: { id: r.id, name, contact } });
@@ -243,9 +375,73 @@ async function handleApi(req, res, pathname) {
     const rows = await db.query("SELECT * FROM customers WHERE contact=?", [contact]);
     if (!rows.length || !checkPassword(password, rows[0].passwordHash))
       return sendJson(res, 401, { ok: false, error: "Ghalat Gmail/phone number ya password." });
+    // Gmail accounts: password alone is not enough — a login code goes to
+    // the Gmail first. Phone accounts and stores without email set up log in
+    // with password only, as before.
+    if (isEmail(contact) && (await smtpSettings()).on) {
+      const issued = await issueCode(contact, "login", { customerId: rows[0].id });
+      if (!issued.ok) return sendJson(res, 400, { ok: false, error: issued.error });
+      return sendJson(res, 200, { ok: true, needCode: true, contact });
+    }
     const token = newToken();
     await db.exec("INSERT INTO sessions (token,customerId,kind,createdAt) VALUES (?,?, 'customer', ?)", [token, rows[0].id, nowIso()]);
     return sendJson(res, 200, { ok: true, token, customer: { id: rows[0].id, name: rows[0].name, contact } });
+  }
+
+  // POST /api/auth/login/confirm {contact, code}
+  if (req.method === "POST" && parts.join("/") === "api/auth/login/confirm") {
+    const contact = String(body.contact || "").trim();
+    const code = String(body.code || "").trim();
+    const v = await verifyCode(contact, "login", code);
+    if (!v.ok) return sendJson(res, 400, { ok: false, error: v.error });
+    const c = await db.query("SELECT id,name,contact FROM customers WHERE id=?", [v.data.customerId]);
+    if (!c.length) return sendJson(res, 400, { ok: false, error: "Account nahi mila. Dobara login karein." });
+    const token = newToken();
+    await db.exec("INSERT INTO sessions (token,customerId,kind,createdAt) VALUES (?,?, 'customer', ?)", [token, c[0].id, nowIso()]);
+    return sendJson(res, 200, { ok: true, token, customer: c[0] });
+  }
+
+  // POST /api/auth/forgot {contact} — sends a reset code to a Gmail account
+  if (req.method === "POST" && parts.join("/") === "api/auth/forgot") {
+    const contact = String(body.contact || "").trim();
+    if (!isEmail(contact)) return sendJson(res, 400, { ok: false, error: "Password reset sirf Gmail wale account ke liye hai. Apna Gmail likhein." });
+    const rows = await db.query("SELECT id FROM customers WHERE contact=?", [contact]);
+    if (!rows.length) return sendJson(res, 400, { ok: false, error: "Is Gmail se koi account nahi mila." });
+    if (!(await smtpSettings()).on) return sendJson(res, 503, { ok: false, error: "Email service set nahi hai. Owner se rabta karein." });
+    const issued = await issueCode(contact, "reset", { customerId: rows[0].id });
+    if (!issued.ok) return sendJson(res, 400, { ok: false, error: issued.error });
+    return sendJson(res, 200, { ok: true, needCode: true, contact });
+  }
+
+  // POST /api/auth/forgot/reset {contact, code, newPassword}
+  if (req.method === "POST" && parts.join("/") === "api/auth/forgot/reset") {
+    const contact = String(body.contact || "").trim();
+    const code = String(body.code || "").trim();
+    const newPassword = String(body.newPassword || "");
+    if (newPassword.length < 4) return sendJson(res, 400, { ok: false, error: "Naya password kam az kam 4 harf ka ho." });
+    const v = await verifyCode(contact, "reset", code);
+    if (!v.ok) return sendJson(res, 400, { ok: false, error: v.error });
+    await db.run("UPDATE customers SET passwordHash=? WHERE id=?", [hashPassword(newPassword), v.data.customerId]);
+    const c = await db.query("SELECT id,name,contact FROM customers WHERE id=?", [v.data.customerId]);
+    if (!c.length) return sendJson(res, 400, { ok: false, error: "Account nahi mila." });
+    const token = newToken();
+    await db.exec("INSERT INTO sessions (token,customerId,kind,createdAt) VALUES (?,?, 'customer', ?)", [token, c[0].id, nowIso()]);
+    return sendJson(res, 200, { ok: true, token, customer: c[0] });
+  }
+
+  // POST /api/auth/send-code {contact, purpose} — resend a code
+  if (req.method === "POST" && parts.join("/") === "api/auth/send-code") {
+    const contact = String(body.contact || "").trim();
+    const purpose = String(body.purpose || "");
+    if (!["login", "register", "reset"].includes(purpose))
+      return sendJson(res, 400, { ok: false, error: "Ghalat request." });
+    const rows = await db.query("SELECT * FROM email_codes WHERE contact=? AND purpose=?", [contact, purpose]);
+    if (!rows.length) return sendJson(res, 400, { ok: false, error: "Pehle code request karein." });
+    let data = {};
+    try { data = JSON.parse(rows[0].data || "{}"); } catch { /* ignore */ }
+    const issued = await issueCode(contact, purpose, data);
+    if (!issued.ok) return sendJson(res, 400, { ok: false, error: issued.error });
+    return sendJson(res, 200, { ok: true, needCode: true, contact });
   }
 
   // GET /api/my/orders
@@ -364,9 +560,30 @@ async function handleApi(req, res, pathname) {
     return sendJson(res, 200, { ok: true, productId: r.id, sardarPrice });
   }
 
+  // GET /api/panel/settings — email (OTP) status for the Owner Panel
+  if (req.method === "GET" && parts.join("/") === "api/panel/settings") {
+    if (!(await authPanel(req))) return sendJson(res, 401, { ok: false, error: "Panel login zaroori hai." });
+    const smtp = await smtpSettings();
+    return sendJson(res, 200, { ok: true, smtpUser: smtp.user, smtpConfigured: smtp.on, emailOtpOn: smtp.on });
+  }
+
+  // POST /api/panel/settings {smtpUser, smtpPass} — owner sets the sending
+  // Gmail + its App Password. Empty smtpPass keeps the saved password.
+  if (req.method === "POST" && parts.join("/") === "api/panel/settings") {
+    if (!(await authPanel(req))) return sendJson(res, 401, { ok: false, error: "Panel login zaroori hai." });
+    const smtpUser = String(body.smtpUser || "").trim();
+    const smtpPass = String(body.smtpPass || "").trim();
+    if (smtpUser && !isEmail(smtpUser)) return sendJson(res, 400, { ok: false, error: "Sahi Gmail likhein." });
+    await setSetting("smtpUser", smtpUser);
+    if (smtpPass) await setSetting("smtpPass", smtpPass);
+    const smtp = await smtpSettings();
+    return sendJson(res, 200, { ok: true, smtpUser: smtp.user, smtpConfigured: smtp.on, emailOtpOn: smtp.on });
+  }
+
   // GET /api/config (public payment info shown at checkout)
   if (req.method === "GET" && parts.join("/") === "api/config") {
-    return sendJson(res, 200, { ok: true, easypaisaJazzcashNumber: EASYPAISA_JAZZCASH_NUMBER, easypaisaJazzcashName: EASYPAISA_JAZZCASH_NAME });
+    const smtp = await smtpSettings();
+    return sendJson(res, 200, { ok: true, easypaisaJazzcashNumber: EASYPAISA_JAZZCASH_NUMBER, easypaisaJazzcashName: EASYPAISA_JAZZCASH_NAME, emailOtpOn: smtp.on });
   }
 
   return sendJson(res, 404, { ok: false, error: "Not found" });
@@ -405,6 +622,8 @@ async function boot() {
   // Migrate older databases that were created before the image column existed.
   try { await db.query("ALTER TABLE products ADD COLUMN image TEXT NOT NULL DEFAULT ''"); } catch { /* already there */ }
   await seedIfEmpty();
+  const smtp = await smtpSettings();
+  if (!smtp.on) console.log("WARNING: Email OTP is OFF — set the sending Gmail + App Password in the Owner Panel (Email Settings) to enable Gmail login codes and forgot-password.");
 }
 module.exports = { handleRequest, boot };
 
