@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sardar And Malik Store — Everything you love, delivered across Pakistan</title>
+<link rel="stylesheet" href="/style.css?v=2">
+</head>
+<body>
+<div class="ticker">CASH ON DELIVERY &nbsp;•&nbsp; 7-DAY RETURNS &nbsp;•&nbsp; NO MINIMUM ORDER &nbsp;•&nbsp; ALL PAKISTAN DELIVERY</div>
+<header class="site-header">
+  <div class="wrap header-row">
+    <a class="logo" href="#/">SARDAR <span>AND MALIK</span> STORE</a>
+    <div class="search-box">
+      <input id="searchInput" type="search" placeholder="Search products... (e.g. Vitamin C Cream)" aria-label="Search products">
+      <button id="searchBtn" type="button">Search</button>
+    </div>
+    <nav class="header-actions">
+      <span id="userGreeting" class="greeting hidden"></span>
+      <button id="myOrdersBtn" class="btn btn-ghost hidden" type="button">My Orders</button>
+      <button id="authBtn" class="btn btn-light" type="button">Login</button>
+      <button id="registerBtn" class="btn btn-orange" type="button">Register</button>
+      <button id="logoutBtn" class="btn btn-ghost hidden" type="button">Logout</button>
+    </nav>
+  </div>
+  <div class="wrap subnav">
+    <button class="chip chip-active" data-cat="">All Products</button>
+    <span id="categoryChips"></span>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="hero" id="hero">
+    <h1>Everything you love, delivered across Pakistan</h1>
+    <p>Cash on Delivery • 7-day returns • No minimum order • 3–5 din delivery</p>
+    <div class="hero-cards">
+      <div class="hero-card"><strong>Shop from Pakistan</strong><span>Local sellers, fast delivery</span></div>
+      <div class="hero-card"><strong>Shop from China</strong><span>Direct from China, best prices</span></div>
+    </div>
+  </section>
+
+  <section id="view-home">
+    <div class="section-head">
+      <h2>🔥 Trending Products</h2>
+      <span id="productCount"></span>
+    </div>
+    <div id="productGrid" class="grid"></div>
+    <div style="text-align:center;margin:18px 0">
+      <button id="loadMoreBtn" class="btn btn-dark hidden" type="button">Load more products</button>
+    </div>
+    <p id="emptyMsg" class="empty hidden">Koi product nahi mila. Search ya category badlein.</p>
+  </section>
+
+  <section id="view-product" class="hidden">
+    <button class="btn btn-ghost" id="backBtn" type="button">← Back to products</button>
+    <div id="productDetail"></div>
+  </section>
+
+  <section id="view-orders" class="hidden">
+    <h2>My Orders</h2>
+    <div id="ordersList"></div>
+    <h3 style="margin-top:28px">My Returns</h3>
+    <div id="returnsList"></div>
+  </section>
+
+  <section id="view-panel" class="hidden">
+    <h2>Owner Panel</h2>
+    <div class="panel-grid">
+      <div>
+        <h3>Orders</h3>
+        <div id="panelOrders"></div>
+      </div>
+      <div>
+        <h3>Return Requests</h3>
+        <div id="panelReturns"></div>
+        <h3 style="margin-top:24px">Add Product</h3>
+        <form id="addProductForm" class="form-card">
+          <input name="name" placeholder="Product name" required>
+          <input name="category" placeholder="Category" value="Other" required>
+          <input name="description" placeholder="Short description">
+          <input name="markazPrice" type="number" min="1" placeholder="Markaz base price (PKR)" required>
+          <button class="btn btn-orange" type="submit">Add Product (+750 auto)</button>
+        </form>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap footer-grid">
+    <div>
+      <strong>SARDAR AND MALIK STORE</strong>
+      <p>Cash on Delivery • All Pakistan • 3–5 din delivery<br>Easypaisa / JazzCash advance payment available</p>
+    </div>
+    <div>
+      <strong>Help</strong>
+      <p>7-day returns • Track your order in My Orders<br>Questions? Contact us on WhatsApp.</p>
+    </div>
+    <div>
+      <button id="ownerLoginLink" class="owner-link" type="button">Owner Login</button>
+      <p class="tiny">© Sardar And Malik Store</p>
+    </div>
+  </div>
+</footer>
+
+<!-- Auth modal -->
+<div id="authModal" class="modal hidden">
+  <div class="modal-card">
+    <button class="modal-close" id="authClose" type="button">✕</button>
+    <h3 id="authTitle">Login</h3>
+    <form id="authForm" class="form-card">
+      <input id="authName" name="name" placeholder="Your name" class="hidden">
+      <input id="authContact" name="contact" placeholder="Gmail ya phone number" required>
+      <input id="authPassword" name="password" type="password" placeholder="Password" required>
+      <button class="btn btn-orange" type="submit" id="authSubmit">Login</button>
+    </form>
+    <p id="authError" class="error hidden"></p>
+    <p class="tiny"><button id="authSwitch" class="link-btn" type="button">New here? Register karein</button></p>
+  </div>
+</div>
+
+<!-- Checkout modal -->
+<div id="orderModal" class="modal hidden">
+  <div class="modal-card">
+    <button class="modal-close" id="orderClose" type="button">✕</button>
+    <h3 id="orderTitle">Order Karein</h3>
+    <form id="orderForm" class="form-card">
+      <input name="customerName" placeholder="Your full name" required>
+      <input name="phone" placeholder="Phone number (e.g. 03001234567)" required>
+      <input name="city" placeholder="City" required>
+      <textarea name="address" placeholder="Full delivery address" required></textarea>
+      <div class="pay-row">
+        <label><input type="radio" name="paymentMethod" value="cod" checked> Cash on Delivery</label>
+        <label><input type="radio" name="paymentMethod" value="easypaisa"> Easypaisa (advance)</label>
+        <label><input type="radio" name="paymentMethod" value="jazzcash"> JazzCash (advance)</label>
+      </div>
+      <div id="advanceBox" class="advance-box hidden">
+        <p>Send payment to: <strong id="payNumber"></strong><br>Account name: <strong id="payName"></strong></p>
+        <input name="transactionId" placeholder="Transaction ID / reference">
+      </div>
+      <p class="tiny">Total: <strong id="orderTotal"></strong> (Cash on Delivery)</p>
+      <button class="btn btn-orange" type="submit">Confirm Order</button>
+    </form>
+    <p id="orderError" class="error hidden"></p>
+  </div>
+</div>
+
+<!-- Panel login modal -->
+<div id="panelModal" class="modal hidden">
+  <div class="modal-card">
+    <button class="modal-close" id="panelClose" type="button">✕</button>
+    <h3>Owner Login</h3>
+    <form id="panelForm" class="form-card">
+      <input name="password" type="password" placeholder="Panel password" required>
+      <button class="btn btn-orange" type="submit">Open Panel</button>
+    </form>
+    <p id="panelError" class="error hidden"></p>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+<script src="/app.js?v=2"></script>
+</body>
+</html>
