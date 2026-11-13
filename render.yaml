@@ -11,7 +11,7 @@ services:
     name: sardar-and-malik-store
     env: node
     plan: free
-    buildCommand: npm install
+    buildCommand: npm install && tar -xzf public/photos-part1.tar.gz -C public/photos/ && tar -xzf public/photos-part2.tar.gz -C public/photos/
     startCommand: node server.js
     envVars:
       - key: NODE_ENV
