@@ -171,6 +171,19 @@ document.querySelector('.subnav [data-cat=""]').addEventListener("click", () => 
 
 // ---------- auth ----------
 let authMode = "login";
+let pendingAuth = null; // {mode:'login'|'register', contact}
+let forgotStep = 1; // 1 = send code, 2 = enter code + new password
+function resetAuthViews() {
+  $("#authForm").classList.remove("hidden");
+  $("#codeForm").classList.add("hidden");
+  $("#codeResendWrap").classList.add("hidden");
+  $("#forgotForm").classList.add("hidden");
+  $("#forgotCode").classList.add("hidden");
+  $("#forgotNewPassword").classList.add("hidden");
+  $("#forgotSubmit").textContent = "Code Bhejein";
+  forgotStep = 1;
+  pendingAuth = null;
+}
 function refreshAuthUI() {
   const logged = !!session;
   $("#userGreeting").classList.toggle("hidden", !logged);
@@ -182,33 +195,99 @@ function refreshAuthUI() {
 }
 function openAuth(mode) {
   authMode = mode;
+  resetAuthViews();
   $("#authTitle").textContent = mode === "register" ? "Register" : "Login";
   $("#authSubmit").textContent = mode === "register" ? "Register" : "Login";
   $("#authName").classList.toggle("hidden", mode !== "register");
   $("#authSwitch").textContent = mode === "register" ? "Account hai? Login karein" : "New here? Register karein";
+  // Forgot password only exists when Gmail codes are switched on.
+  $("#forgotLink").classList.toggle("hidden", mode !== "login" || !payInfo.emailOtpOn);
   $("#authError").classList.add("hidden");
   $("#authModal").classList.remove("hidden");
 }
 $("#authBtn").addEventListener("click", () => openAuth("login"));
 $("#registerBtn").addEventListener("click", () => openAuth("register"));
 $("#authSwitch").addEventListener("click", () => openAuth(authMode === "login" ? "register" : "login"));
-$("#authClose").addEventListener("click", () => $("#authModal").classList.add("hidden"));
+$("#authClose").addEventListener("click", () => { resetAuthViews(); $("#authModal").classList.add("hidden"); });
 $("#logoutBtn").addEventListener("click", () => {
   session = null; localStorage.removeItem("sms_session");
   panelToken = ""; sessionStorage.removeItem("sms_panel");
   refreshAuthUI(); toast("Logout ho gaya."); location.hash = "#/";
 });
+function finishLogin(data) {
+  session = { token: data.token, customer: data.customer };
+  localStorage.setItem("sms_session", JSON.stringify(session));
+  resetAuthViews();
+  $("#authModal").classList.add("hidden");
+  refreshAuthUI();
+  toast(authMode === "register" ? "Account ban gaya. Khush amdeed!" : "Login ho gaya.");
+}
 $("#authForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const fd = new FormData(e.target);
   try {
     const data = await api("/api/auth/" + authMode, { method: "POST", body: {
       name: fd.get("name"), contact: fd.get("contact"), password: fd.get("password") } });
-    session = { token: data.token, customer: data.customer };
-    localStorage.setItem("sms_session", JSON.stringify(session));
-    $("#authModal").classList.add("hidden");
-    refreshAuthUI();
-    toast(authMode === "register" ? "Account ban gaya. Khush amdeed!" : "Login ho gaya.");
+    if (data.needCode) {
+      pendingAuth = { mode: authMode, contact: data.contact };
+      $("#authForm").classList.add("hidden");
+      $("#codeHint").textContent = data.contact + " par 6 harf ka code bheja gaya hai. Wo code yahan likhein (10 minute valid).";
+      $("#codeForm").classList.remove("hidden");
+      $("#codeResendWrap").classList.remove("hidden");
+      $("#codeInput").value = "";
+      $("#codeInput").focus();
+      return;
+    }
+    finishLogin(data);
+  } catch (err) {
+    const el = $("#authError");
+    el.textContent = err.message; el.classList.remove("hidden");
+  }
+});
+$("#codeForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!pendingAuth) return;
+  try {
+    const data = await api("/api/auth/" + pendingAuth.mode + "/confirm", { method: "POST", body: {
+      contact: pendingAuth.contact, code: $("#codeInput").value.trim() } });
+    finishLogin(data);
+  } catch (err) {
+    const el = $("#authError");
+    el.textContent = err.message; el.classList.remove("hidden");
+  }
+});
+$("#codeResend").addEventListener("click", async () => {
+  if (!pendingAuth) return;
+  try {
+    await api("/api/auth/send-code", { method: "POST", body: { contact: pendingAuth.contact, purpose: pendingAuth.mode } });
+    toast("Code dobara bhej diya gaya. Gmail check karein.");
+  } catch (err) { toast(err.message); }
+});
+$("#forgotLink").addEventListener("click", () => {
+  resetAuthViews();
+  $("#authForm").classList.add("hidden");
+  $("#forgotForm").classList.remove("hidden");
+  $("#authTitle").textContent = "Forgot Password";
+});
+$("#forgotForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const contact = $("#forgotContact").value.trim();
+  try {
+    if (forgotStep === 1) {
+      await api("/api/auth/forgot", { method: "POST", body: { contact } });
+      forgotStep = 2;
+      $("#forgotCode").classList.remove("hidden");
+      $("#forgotNewPassword").classList.remove("hidden");
+      $("#forgotSubmit").textContent = "Password Reset Karein";
+      $("#forgotCode").focus();
+      toast("Reset code Gmail par bhej diya gaya.");
+    } else {
+      const data = await api("/api/auth/forgot/reset", { method: "POST", body: {
+        contact, code: $("#forgotCode").value.trim(), newPassword: $("#forgotNewPassword").value } });
+      authMode = "login";
+      finishLogin(data);
+      toast("Password change ho gaya. Login ho gaya.");
+    }
   } catch (err) {
     const el = $("#authError");
     el.textContent = err.message; el.classList.remove("hidden");
@@ -330,11 +409,33 @@ async function loadPanel() {
       await api("/api/panel/returns/" + b.dataset.retNo + "/status", { method: "POST", token: panelToken, body: { status: "Rejected" } });
       toast("Return rejected."); loadPanel();
     }));
+    await loadEmailSettings();
   } catch (err) {
     panelToken = ""; sessionStorage.removeItem("sms_panel");
     $("#panelOrders").innerHTML = "<p>" + esc(err.message) + "</p>";
   }
 }
+async function loadEmailSettings() {
+  try {
+    const s = await api("/api/panel/settings", { token: panelToken });
+    const form = $("#emailSettingsForm");
+    form.smtpUser.value = s.smtpUser || "";
+    form.smtpPass.value = "";
+    $("#emailStatus").textContent = s.emailOtpOn
+      ? "Email OTP: ON — Gmail wale accounts ko login/register par Gmail par code aayega, aur Forgot Password chalu hai."
+      : "Email OTP: OFF — Gmail aur App Password set karein taake login code aur Forgot Password chalu ho.";
+  } catch (err) { $("#emailStatus").textContent = "Email settings load nahi hui: " + err.message; }
+}
+$("#emailSettingsForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  try {
+    const s = await api("/api/panel/settings", { method: "POST", token: panelToken, body: {
+      smtpUser: fd.get("smtpUser"), smtpPass: fd.get("smtpPass") } });
+    await loadEmailSettings();
+    toast(s.emailOtpOn ? "Email settings save ho gayi. Login code chalu hai." : "Email settings save ho gayi. OTP OFF hai — Gmail aur App Password dono zaroori hain.");
+  } catch (err) { toast(err.message); }
+});
 $("#addProductForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const fd = new FormData(e.target);

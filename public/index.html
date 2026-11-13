@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Sardar And Malik Store — Everything you love, delivered across Pakistan</title>
-<link rel="stylesheet" href="/style.css?v=2">
+<link rel="stylesheet" href="/style.css?v=3">
 </head>
 <body>
 <div class="ticker">CASH ON DELIVERY &nbsp;•&nbsp; 7-DAY RETURNS &nbsp;•&nbsp; NO MINIMUM ORDER &nbsp;•&nbsp; ALL PAKISTAN DELIVERY</div>
@@ -81,6 +81,14 @@
           <input name="markazPrice" type="number" min="1" placeholder="Markaz base price (PKR)" required>
           <button class="btn btn-orange" type="submit">Add Product (+750 auto)</button>
         </form>
+        <h3 style="margin-top:24px">Email Settings (Login Code + Forgot Password)</h3>
+        <form id="emailSettingsForm" class="form-card">
+          <p class="tiny" id="emailStatus">Email OTP: OFF</p>
+          <input name="smtpUser" placeholder="Store ka Gmail (e.g. you@gmail.com)">
+          <input name="smtpPass" type="password" placeholder="Gmail App Password (16 harf) — change na karna ho to khali chhorein">
+          <button class="btn btn-orange" type="submit">Save Email Settings</button>
+        </form>
+        <p class="tiny">Gmail App Password banane ke liye: Google Account → Security → 2-Step Verification ON → App passwords → "Sardar Store" naam se banayein. Jab ye set ho jaye to Gmail wale accounts ko login/register par Gmail par code aayega, aur Forgot Password bhi chalu ho jayega.</p>
       </div>
     </div>
   </section>
@@ -114,7 +122,21 @@
       <input id="authPassword" name="password" type="password" placeholder="Password" required>
       <button class="btn btn-orange" type="submit" id="authSubmit">Login</button>
     </form>
+    <form id="codeForm" class="form-card hidden">
+      <p class="tiny" id="codeHint">Gmail par 6 harf ka code bheja gaya hai. Wo code yahan likhein (10 minute valid).</p>
+      <input id="codeInput" name="code" placeholder="6 harf ka code" inputmode="numeric" maxlength="6" required>
+      <button class="btn btn-orange" type="submit">Verify Karein</button>
+    </form>
+    <p class="tiny hidden" id="codeResendWrap"><button id="codeResend" class="link-btn" type="button">Code dobara bhejein</button></p>
+    <form id="forgotForm" class="form-card hidden">
+      <p class="tiny">Apna Gmail likhein — us par password reset code aayega.</p>
+      <input id="forgotContact" name="contact" placeholder="Apna Gmail likhein" required>
+      <input id="forgotCode" name="code" placeholder="Gmail par aaya 6 harf ka code" class="hidden">
+      <input id="forgotNewPassword" name="newPassword" type="password" placeholder="Naya password" class="hidden">
+      <button class="btn btn-orange" type="submit" id="forgotSubmit">Code Bhejein</button>
+    </form>
     <p id="authError" class="error hidden"></p>
+    <p class="tiny"><button id="forgotLink" class="link-btn hidden" type="button">Password bhool gaye?</button></p>
     <p class="tiny"><button id="authSwitch" class="link-btn" type="button">New here? Register karein</button></p>
   </div>
 </div>
@@ -159,6 +181,6 @@
 </div>
 
 <div id="toast" class="toast hidden"></div>
-<script src="/app.js?v=2"></script>
+<script src="/app.js?v=3"></script>
 </body>
 </html>
