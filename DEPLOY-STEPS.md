@@ -1,9 +1,20 @@
 # Deploy steps — get a public link for Sardar And Malik Store
 
-The store is built and tested. It is **not live yet** because deploying needs
-an account on a hosting service, and no hosting account is connected. All
-steps below are **free and need no credit card**. Nothing here asks for a
-password or a card.
+The store is built and tested. It is **not live yet** on a permanent link because deploying needs
+an account on a hosting service, and no hosting account is connected.
+
+> **Update 2026-11-13:** Render has started asking for a credit/debit card for identity
+> verification even on the free plan (a temporary $1 USD authorization, refunded; the plan
+> stays $0/month). The older line below saying "no credit card is asked for" is no longer
+> true in practice — the deploy form was filled in full on 2026-11-13 and stopped at the
+> Add Card dialog, so no Render service or deploy exists yet. If you have any debit/credit
+> card (bank, JazzCash or Easypaisa debit card), add it yourself on Render's site — Muse
+> never asks for card numbers — and the deploy can then finish in one step. If you have
+> no card at all, see "Plan B if you have no card" at the bottom: the no-card options
+> checked on 2026-11-13 (Railway, Fly.io, Koyeb) do not currently give a free permanent
+> host, and Zeabur's free plan is unverified for this store, so do not promise it until
+> tested. Until a permanent host is chosen, the store stays live on the temporary tunnel
+> link, which Muse keeps alive and re-sends whenever it changes.
 
 ## What the user has to do (about 15 minutes)
 
@@ -11,7 +22,9 @@ password or a card.
 
 1. Open https://render.com and click **Get Started**.
 2. Sign up with an email address (or "Sign up with GitHub" if you have one).
-   No credit card is asked for.
+   **Since 2026-11-13 Render asks for a credit/debit card for identity verification even
+   on the free plan** (temporary $1 USD authorization, refunded; plan stays $0/month).
+   Add the card yourself on Render's site; Muse never asks for card numbers.
 3. Confirm the email Render sends you.
 
 ### Step 2 — Make a free Neon account (the database, so orders are never lost)
@@ -72,6 +85,21 @@ with `curl` against the local server (see README for the exact commands).
   the next query (a few seconds). It does not expire.
 - If the shop grows and you later pay, the first paid step is Render's
   $7/month web service (stays awake) — nothing forces you to pay.
+
+## Plan B if you have no card (checked 2026-11-13 — do not promise any of these until tested)
+
+- **Railway:** signups reopened 2026-11-02 after the October security incident, but new
+  customers must subscribe to a paid plan (Hobby/Pro) before deploying; free trial
+  deployments remain temporarily unavailable. Not a no-card free host right now.
+- **Fly.io:** new accounts get only a $1 trial for 7 days, no card to start; after that a
+  card is required and machines stop. Not permanent.
+- **Koyeb:** card required (about a $29 hold) and the free Starter tier is closed to new
+  users after the Mistral acquisition. Not a no-card option.
+- **Zeabur:** pricing pages checked Nov 2026 list a Free $0 plan with no card, but it is
+  described as "1 manageable own server" with auto-sleep, and an Aug 2026 review says
+  shared clusters are gone and a machine starts at about $10/month. Unverified whether
+  its free plan really hosts this Node store for free — test it with the user's GitHub
+  account before promising anything.
 
 ## Alternative, if you prefer Vercel
 
