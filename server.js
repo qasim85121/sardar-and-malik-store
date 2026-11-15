@@ -14,6 +14,7 @@ const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const { execFileSync } = require("node:child_process");
 
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || "0.0.0.0";
@@ -616,7 +617,28 @@ async function handleRequest(req, res) {
 
 const server = http.createServer(handleRequest);
 
+// On hosts that do not run render.yaml's buildCommand (e.g. Railway), the
+// bundled product photos are never extracted from the tarballs, so every
+// local photo falls through to the index.html SPA fallback and shows broken.
+// Extract them once at startup when the photos folder is (near-)empty.
+function ensurePhotos() {
+  try {
+    const dir = path.join(__dirname, "public", "photos");
+    const have = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => /\.jpe?g$/i.test(f)).length : 0;
+    if (have >= 200) return;
+    fs.mkdirSync(dir, { recursive: true });
+    for (const pack of ["photos-part1.tar.gz", "photos-part2.tar.gz"]) {
+      const tarball = path.join(__dirname, "public", pack);
+      if (fs.existsSync(tarball)) execFileSync("tar", ["-xzf", tarball, "-C", dir], { stdio: "ignore" });
+    }
+    console.log("Product photos extracted:", fs.readdirSync(dir).length);
+  } catch (e) {
+    console.error("Photo extraction failed (continuing without local photos):", e.message);
+  }
+}
+
 async function boot() {
+  ensurePhotos();
   await initDb();
   for (const sql of DDL()) await db.query(sql);
   // Migrate older databases that were created before the image column existed.
